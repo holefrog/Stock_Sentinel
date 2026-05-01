@@ -1,0 +1,232 @@
+                                              # ============================================================
+# Stock Sentinel — config/settings.toml
+# 全局行为配置，不入 git，从 settings.toml.example 复制后填写
+# ============================================================
+
+# ── Discord ──────────────────────────────────────────────────
+[discord]
+guild_id          = "1490210337041944598"
+
+report_channel_id = "1490212708795023470"
+scan_channel_id   = "1495603884532695191"
+alert_channel_id  = "1495609759439655023"
+notice_channel_id = "1497107825468641310"
+log_channel_id    = "1496387275901239306"
+
+api_base_url      = "https://discord.com/api/v10"
+user_agent        = "StockSentinel/1.0"
+
+[discord.bot_prompt]
+system = """
+你是一个专业的金融与技术助手，请根据用户的指令提供准确的回答。
+"""
+
+
+# ── 调度 ──────────────────────────────────────────────────────
+[schedule]
+cron_tz                    = "America/New_York"
+morning_report             = "07:30"
+evening_report             = "18:30"
+heartbeat                  = "19:00"
+
+
+# ── 市场扫描阈值 ───────────────────────────────────────────────
+[market]
+market_scan_interval_minutes = 5
+alert_threshold_pct  = 2.5
+volume_spike_threshold = 1.5
+
+
+# ── 新闻处理 ───────────────────────────────────────────────────
+[news]
+# 超过 30 天的去重记录自动清理
+retention_days = 30
+
+# 新闻扫描间隔
+news_scan_interval_minutes = 15
+# 请求间随机延迟（秒），防止被 SEC 反爬
+request_delay_min = 1
+request_delay_max = 3
+
+# 过滤门槛
+relevance_threshold = 6
+# 只有摘要超过 40 字符才进行 AI 深度解析
+summary_min_length = 40
+
+
+[news.filter_prompt]
+system = """
+你是一个华尔街极客量化分析师。你的任务是评估新闻对我们的核心关注标的（{watch_list}）以及美国宏观经济、地缘政治的实质性影响。
+请对提供的每条新闻进行 0-10 分打分。
+- 8-10分：直接影响关注标的的财报/基本面、重大宏观数据（加息/非农/CPI）、突发重大地缘政治或黑天鹅事件（大选/战争/灾难）。
+- 5-7分：相关行业的整体趋势、竞品动态、普通的产品或技术发布。
+- 0-4分：公关稿、人事八卦、蹭热度的无效资讯、无关的股市花边。
+
+严格输出合法 JSON 数组，不含任何说明文字和 markdown 代码块标记：
+[{"guid": "传入的guid", "score": 8, "reason": "打分理由简述"}]
+"""
+
+[news.title_translation_prompt]
+system = """
+你是一个专业的华尔街财经翻译助手。请将以下英文新闻标题极其精准、流畅地翻译为中文。绝对不要输出拼音，不要加引号，只返回最终翻译结果本身。
+"""
+
+[news.full_translation_prompt]
+system = """
+你是一个极其严谨的金融分析师。请将以下输入的美股新闻文本翻译成中文并提取核心要点。
+【绝对红线】：
+1. 严禁使用任何外部知识进行扩写、脑补或推理。你的输出必须 100% 来源于我提供的文本。
+2. 如果输入文本极短（例如只有一两句话的标题或摘要），请直接提供精准翻译即可，**绝对不要**强行拆分多条要点、不要生成“深度解析”等废话。
+3. 保持金融术语准确，条理清晰。
+"""
+
+[[news.sources]]
+name             = "美联储声明"
+type             = "rss"
+url              = "https://www.federalreserve.gov/feeds/press_all.xml"
+enabled          = true
+official         = true
+channel          = "notice"
+min_score        = 0
+scrape_full_text = true
+
+[[news.sources]]
+name             = "SEC 8-K"
+type             = "rss"
+url              = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&dateb=&owner=include&count=40&output=atom"
+enabled          = true
+official         = true
+channel          = "notice"
+min_score        = 0
+scrape_full_text = true
+
+[[news.sources]]
+name             = "SEC Form 4 内部人交易"
+type             = "rss"
+url              = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=4&dateb=&owner=include&count=40&output=atom"
+enabled          = true
+official         = true
+channel          = "notice"
+min_score        = 0
+scrape_full_text = true
+
+[[news.sources]]
+name             = "Yahoo Finance 宏观新闻"
+type             = "rss"
+url              = "https://finance.yahoo.com/news/rssindex"
+enabled          = true
+official         = false
+channel          = "alert"
+min_score        = 6
+scrape_full_text = false
+
+[[news.sources]]
+name             = "CNBC 市场新闻"
+type             = "rss"
+url              = "https://www.cnbc.com/id/10001147/device/rss/rss.html"
+enabled          = true
+official         = false
+channel          = "alert"
+min_score        = 6
+scrape_full_text = true
+
+[[news.sources]]
+name             = "Finnhub 个股新闻"
+type             = "finnhub"
+enabled          = true
+official         = false
+channel          = "alert"
+min_score        = 6
+scrape_full_text = false
+
+# ── 报告生成 ───────────────────────────────────────────────────
+[report]
+# 汇总时参考的当日高分新闻最大数量
+max_news_items = 15
+# 只有评分超过 7 分的新闻才有资格进入阿尔法报告
+min_score_threshold = 7
+
+
+[report.summary_prompt]
+system = """
+Role:
+你是一位资深的华尔街美股宏观分析师。
+
+Task:
+我会给你提供一份今天高价值新闻的 JSON 数组，格式为：[{"title": "新闻标题", "content": "新闻的详细正文或核心概要"}]。
+你的任务是：仔细阅读这些 content（正文细节），撰写一份专业、深度的收盘市场解读。
+
+Output Requirements:
+- 语言: 中文
+- 排版: 使用 Markdown 表格
+- 风格: 报告应具有 PDF 风格的专业感，严禁废话
+"""
+
+[report.anomaly_prompt]
+system = """
+Role:
+你是一个华尔街顶级日内交易员，对市场情绪和突发新闻极度敏感。
+
+我会给你提供一份今天高价值新闻的 JSON 数组，格式为：[{"title": "新闻标题", "content": "新闻的详细正文或核心概要"}]。
+
+分析维度：
+1. 消息面：是否有财报预览、大单中标、监管变动或分析师调价？
+2. 技术面：是否触发了关键点位（如 200 日线、历史高点）的突破或破位？
+3. 外部关联：是否受同板块龙头或宏观数据（如非农/CPI）的带动？
+
+要求：
+- 语言：中文
+- 结论：必须明确给出"异动诱因"和"确定性评分 (0-10)"
+- 格式：使用 Discord 友好的 Markdown 排版
+- 禁忌：严禁文学化描述，只看事实和逻辑
+"""
+
+# ── LLM 引擎 ───────────────────────────────────────────────────
+[[llm.engines]]
+name             = "gemini"
+url              = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent"
+model            = "gemini-3-flash-preview"
+priority         = 1
+quota            = 1000
+payload_template = '''
+{
+  "system_instruction": {"parts": [{"text": "{sys}"}]},
+  "contents": [{"parts": [{"text": "{user}"}]}]
+}
+'''
+
+[[llm.engines]]
+name             = "nvidia"
+url              = "https://integrate.api.nvidia.com/v1/chat/completions"
+model            = "meta/llama-3.3-70b-instruct"
+priority         = 2
+quota            = 5000
+max_tokens       = 4096
+payload_template = '''
+{
+  "model": "{model}",
+  "messages": [
+    {"role": "system", "content": "{sys}"},
+    {"role": "user", "content": "{user}"}
+  ],
+  "max_tokens": {max_tokens}
+}
+'''
+
+[[llm.engines]]
+name            = "claude"
+url             = "https://api.anthropic.com/v1/messages"
+model           = "claude-3-5-sonnet-20241022"
+priority        = 3
+quota           = 1000
+max_tokens      = 4096
+cost_per_1m_in  = 3.0
+cost_per_1m_out = 15.0
+payload_template = '''
+{
+  "model": "{model}",
+  "system": "{sys}",
+  "messages": [{"role": "user", "content": "{user}"}],
+  "max_tokens": {max_tokens}
+}
+'''

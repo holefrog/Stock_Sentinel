@@ -1,0 +1,66 @@
+# ============================================================
+# Stock Sentinel — config/watch_list.toml
+# 业务监控数据，入 git，可通过 /watch 指令动态修改
+# ============================================================
+
+# ── 宏观与指数监控（只读，不通过 /watch 指令修改）────────────────
+[[indices]]
+ticker = "SPY"
+name   = "S&P 500"
+type   = "index"
+
+[[indices]]
+ticker = "QQQ"
+name   = "Nasdaq 100"
+type   = "index"
+
+[[indices]]
+ticker = "DIA"
+name   = "道琼斯"
+type   = "index"
+
+[[indices]]
+ticker = "DGS10"
+name   = "10年美债收益率"
+type   = "macro"
+
+[[indices]]
+ticker = "FNG"
+name   = "恐惧与贪婪指数"
+type   = "sentiment"
+
+# ── 自选股监控（通过 /watch add|remove 动态管理）─────────────────
+[[watch_list]]
+ticker = "AAPL"
+name   = "Apple"
+note   = "AI 终端落地与服务增速"
+
+[[watch_list]]
+ticker = "MSFT"
+name   = "Microsoft"
+note   = "Azure AI 云收入与 Copilot 渗透率"
+
+[[watch_list]]
+ticker = "GOOGL"
+name   = "Google"
+note   = "广告复苏与 Gemini 商业化进展"
+
+[[watch_list]]
+ticker = "AMZN"
+name   = "Amazon"
+note   = "AWS 增速与消费支出韧性"
+
+[[watch_list]]
+ticker = "META"
+name   = "Meta"
+note   = "广告 ROI 与 AI 基建资本支出"
+
+[[watch_list]]
+ticker = "NVDA"
+name   = "NVIDIA"
+note   = "数据中心出货量与 Blackwell 产能爬坡"
+
+[[watch_list]]
+ticker = "TSLA"
+name   = "Tesla"
+note   = "交付量与 FSD / Robotaxi 进展"

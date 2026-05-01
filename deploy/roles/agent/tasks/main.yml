@@ -1,0 +1,159 @@
+---
+# agent/tasks/main.yml
+
+# ── 1. 读取业务配置变量 ──────────────────────────────────────────────────────────
+- name: Extract and set business variables
+  tags: [deploy, secrets, always]
+  ansible.builtin.set_fact:
+    # 物理路径 sentinel_path, web_base, domain 等已由 site.yml 传递，无需再从 TOML 抽取
+    report_ch: "{{ cfg.discord.report_channel_id }}"
+    scan_ch: "{{ cfg.discord.scan_channel_id }}"
+    alert_ch: "{{ cfg.discord.alert_channel_id }}"
+    log_ch: "{{ cfg.discord.log_channel_id }}"
+    morning_time: "{{ cfg.schedule.morning_report }}"
+    evening_time: "{{ cfg.schedule.evening_report }}"
+    heartbeat_time: "{{ cfg.schedule.heartbeat }}"
+    cron_tz: "{{ cfg.schedule.cron_tz }}"
+    market_scan_minutes: "{{ cfg.market.market_scan_interval_minutes }}"
+    news_scan_minutes: "{{ cfg.news.news_scan_interval_minutes }}"
+
+# ── 2. 路径推导 ──────────────────────────────────────────────────────────────
+- name: Derive path variables
+  tags: [deploy, always]
+  ansible.builtin.set_fact:
+    # web_base 和 domain 直接可用
+    web_root: "{{ web_base }}/{{ domain }}"
+
+# ── 3. 目录与分发 ────────────────────────────────────────────────────────────
+- name: Create project directory structure
+  tags: [deploy]
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    # 只构建 Ansible 层管辖的骨架，内部业务目录由 config.py 启动时自建
+    - "{{ sentinel_path }}/agent"
+    - "{{ sentinel_path }}/config"
+    - "{{ web_root }}"
+    - "{{ web_root }}/{{ sentinel_prefix }}"
+
+- name: Upload Agent source code
+  tags: [deploy]
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../agent/"
+    dest: "{{ sentinel_path }}/agent/"
+    mode: '0644'
+  notify: Restart bot
+
+- name: Sync configuration TOML files (Except hugo.toml)
+  tags: [deploy, secrets]
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../config/{{ item }}"
+    dest: "{{ sentinel_path }}/config/{{ item }}"
+    mode: '0644'
+  loop:
+    - "watch_list.toml"
+    - "settings.toml"
+  notify: Restart bot
+
+# ── 4. 环境与服务 ────────────────────────────────────────────────────────────
+- name: Create Python 3.9 virtual environment
+  tags: [deploy]
+  ansible.builtin.command:
+    cmd: python3.9 -m venv {{ sentinel_path }}/venv
+    creates: "{{ sentinel_path }}/venv/bin/activate"
+
+- name: Install dependencies from requirements.txt
+  tags: [deploy]
+  ansible.builtin.pip:
+    requirements: "{{ sentinel_path }}/agent/requirements.txt"
+    virtualenv: "{{ sentinel_path }}/venv"
+    extra_args: "--upgrade pip"
+
+- name: Generate .env configuration
+  tags: [deploy, secrets]
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ sentinel_path }}/.env"
+    mode: '0600'
+  notify: Restart bot
+
+- name: Deploy Systemd service unit
+  tags: [deploy]
+  ansible.builtin.template:
+    src: bot.service.j2
+    dest: "/etc/systemd/system/{{ service_name }}.service"
+    mode: '0644'
+  notify:
+    - Reload systemd
+    - Restart bot
+
+- name: Ensure Discord Bot service is running
+  tags: [deploy]
+  ansible.builtin.systemd:
+    name: "{{ service_name }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# ── Nginx 统一配置已全权交由 nginx role 处理 ──
+# ── 6. 调度任务 (集成 Hugo 编译动作) ──────────────────────────────────────────
+- name: Setup scheduled report tasks
+  tags: [deploy]
+  ansible.builtin.cron:
+    name: "Stock-sentinel {{ item.type }} report"
+    hour: "{{ item.time.split(':')[0] | int }}"
+    minute: "{{ item.time.split(':')[1] | int }}"
+    job: >
+      set -a; . {{ sentinel_path }}/.env; set +a;
+      PYTHONPATH={{ sentinel_path }} {{ sentinel_path }}/venv/bin/python -m agent.report
+      --type {{ item.type }} --channel {{ report_ch }}
+      >> {{ sentinel_path }}/logs/{{ item.type }}.log 2>&1;
+      {{ sentinel_path }}/hugo/build_hugo.sh >> {{ sentinel_path }}/logs/hugo.log 2>&1
+  loop:
+    - { type: 'morning', time: "{{ morning_time }}" }
+    - { type: 'evening', time: "{{ evening_time }}" }
+
+- name: Setup multi-channel news scanner cron task
+  tags: [deploy]
+  ansible.builtin.cron:
+    name: "Stock-sentinel news scanner (Multi-channel)"
+    minute: "*/{{ news_scan_minutes }}"
+    job: >
+      set -a; . {{ sentinel_path }}/.env; set +a;
+      PYTHONPATH={{ sentinel_path }} {{ sentinel_path }}/venv/bin/python -m agent.news_scanner
+      --channel {{ alert_ch }} >> {{ sentinel_path }}/logs/scan.log 2>&1;
+      {{ sentinel_path }}/hugo/build_hugo.sh >> {{ sentinel_path }}/logs/hugo.log 2>&1
+
+- name: Setup market scan cron task
+  tags: [deploy]
+  ansible.builtin.cron:
+    name: "Stock-sentinel market scan"
+    minute: "*/{{ market_scan_minutes }}"
+    job: >
+      set -a; . {{ sentinel_path }}/.env; set +a;
+      PYTHONPATH={{ sentinel_path }} {{ sentinel_path }}/venv/bin/python -m agent.market_scan
+      --channel {{ scan_ch }} >> {{ sentinel_path }}/logs/scan.log 2>&1
+
+- name: Setup heartbeat cron task
+  tags: [deploy]
+  ansible.builtin.cron:
+    name: "Stock-sentinel heartbeat"
+    hour: "{{ heartbeat_time.split(':')[0] | int }}"
+    minute: "{{ heartbeat_time.split(':')[1] | int }}"
+    job: >
+      set -a; . {{ sentinel_path }}/.env; set +a;
+      PYTHONPATH={{ sentinel_path }} {{ sentinel_path }}/venv/bin/python -m agent.heartbeat
+      --channel {{ log_ch }} >> {{ sentinel_path }}/logs/heartbeat.log 2>&1
+
+# ── 7. 状态确认 ──────────────────────────────────────────────────────────────
+- name: Verify service health
+  tags: [deploy]
+  ansible.builtin.systemd:
+    name: "{{ service_name }}"
+  register: svc_info
+  until: svc_info.status.ActiveState == "active"
+  retries: 5
+  delay: 3
+  changed_when: false

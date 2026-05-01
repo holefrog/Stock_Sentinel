@@ -1,0 +1,19 @@
+---
+# agent/handlers/main.yml
+# v1
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Restart bot
+  ansible.builtin.systemd:
+    # 修复：去掉了 "{{ service_name }}" 冒号后的多余空格
+    name: "{{ service_name }}"
+    state: restarted
+
+# 新增的 nginx handler
+- name: Reload nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: reloaded

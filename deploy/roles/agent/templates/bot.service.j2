@@ -1,0 +1,24 @@
+# bot.service — 由 Ansible 自动生成
+# v2 - 使用 python -m 运行模块
+
+[Unit]
+Description=StockSentinel Discord Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+# 将工作目录设置为项目根目录，以便 Python 能够找到 agent 模块
+WorkingDirectory={{ sentinel_path }}
+EnvironmentFile={{ sentinel_path }}/.env
+# 使用 -m agent.bot 将机器人作为模块运行，以确保模块解析正确
+ExecStart={{ sentinel_path }}/venv/bin/python -m agent.bot
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier={{ service_name }}
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,128 @@
+# ── 1. 环境检查与强一致性安装 (确保编译引擎可靠) ──────────────────────────────
+- name: Check if Hugo is installed and version matches
+  tags: [hugo, check]
+  ansible.builtin.shell: hugo version | grep "v0.146.0"
+  register: hugo_check
+  ignore_errors: true
+  changed_when: false
+
+- name: Install Correct Hugo Version (Extended)
+  tags: [hugo, check]
+  when: hugo_check.failed
+  block:
+    - name: Download Hugo [0.146.0]
+      ansible.builtin.get_url:
+        url: "https://github.com/gohugoio/hugo/releases/download/v0.146.0/hugo_extended_0.146.0_linux-amd64.tar.gz"
+        dest: "/tmp/hugo_0.146.0.tar.gz"
+        mode: "0644"
+    - name: Extract and Overwrite binary
+      ansible.builtin.unarchive:
+        src: "/tmp/hugo_0.146.0.tar.gz"
+        dest: "{{ hugo_path | dirname }}"
+        remote_src: true
+        include: ["hugo"]
+        owner: root
+        group: root
+        mode: "0755"
+
+# ── 2. 主题与目录结构初始化 (解决模板语法冲突) ───────────────────────────────
+- name: Initialize Hugo project skeleton
+  tags: [hugo, deploy]
+  ansible.builtin.command:
+    cmd: "{{ hugo_path }} new site {{ sentinel_path }}/hugo --force"
+    creates: "{{ sentinel_path }}/hugo/hugo.toml"
+
+- name: Force Sync PaperMod Theme (Master Branch)
+  tags: [hugo, deploy]
+  ansible.builtin.git:
+    repo: https://github.com/adityatelange/hugo-PaperMod
+    dest: "{{ sentinel_path }}/hugo/themes/PaperMod"
+    version: "master"
+    depth: 1
+    update: true
+    force: true
+
+- name: Remove competing Hugo config files (yaml/json)
+  tags: [hugo, deploy]
+  ansible.builtin.file:
+    path: "{{ sentinel_path }}/hugo/{{ item }}"
+    state: absent
+  loop:
+    - "hugo.yaml"
+    - "hugo.json"
+    - "config.yaml"
+    - "config.json"
+
+# ── 3. 基础设施准备 (对齐 Nginx 物理路径逻辑与权限) ──────────────────────────
+- name: Create Web root and Sentinel subdirectory
+  tags: [hugo, deploy]
+  ansible.builtin.file:
+    path: "{{ web_base }}/{{ domain }}{% if sentinel_prefix %}/{{ sentinel_prefix }}{% endif %}"
+    state: directory
+    mode: "0755"
+    owner: nginx
+    group: nginx
+
+- name: Create Archive subdirectories for Nginx routing
+  tags: [hugo, deploy]
+  ansible.builtin.file:
+    path: "{{ web_base }}/{{ domain }}{% if sentinel_prefix %}/{{ sentinel_prefix }}{% endif %}/{{ item }}"
+    state: directory
+    mode: "0755"
+    owner: nginx
+    group: nginx
+  loop:
+    - "reports"
+    - "news"
+
+# ── 4. 关键文件部署 (同步配置、布局、内容与静态资源) ──────────────────────────────────
+- name: Template Hugo configuration
+  tags: [hugo, deploy]
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/../hugo/hugo.toml"
+    dest: "{{ sentinel_path }}/hugo/hugo.toml"
+    mode: "0644"
+
+# ── 4. 关键文件部署  ──────────────────────────────────
+- name: Copy project layouts, content and static assets
+  tags: [hugo, deploy]
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: "0644"
+    force: true
+  loop:
+    - {src: "{{ playbook_dir }}/../hugo/layouts/", dest: "{{ sentinel_path }}/hugo/layouts/"}
+    - {src: "{{ playbook_dir }}/../hugo/content/", dest: "{{ sentinel_path }}/hugo/content/"}
+    - {src: "{{ playbook_dir }}/../hugo/static/", dest: "{{ sentinel_path }}/hugo/static/"}
+
+
+# ── 5. 生产环境构建 (使用脚本封装解决重定向双斜杠偏移问题) ────────
+- name: Deploy Hugo build wrapper script
+  tags: [hugo, deploy]
+  ansible.builtin.template:
+    src: build_hugo.sh.j2
+    dest: "{{ sentinel_path }}/hugo/build_hugo.sh"
+    mode: "0755"
+
+- name: Force clean Hugo destination before build
+  tags: [hugo, deploy]
+  ansible.builtin.file:
+    path: "{{ web_base }}/{{ domain }}{% if sentinel_prefix %}/{{ sentinel_prefix }}{% endif %}"
+    state: absent
+
+- name: Clean and Rebuild Site via wrapper
+  tags: [hugo, deploy]
+  ansible.builtin.command:
+    cmd: "{{ sentinel_path }}/hugo/build_hugo.sh"
+  changed_when: true
+
+- name: Ensure correct permissions on generated files for Nginx
+  tags: [hugo, deploy]
+  ansible.builtin.file:
+    path: "{{ web_base }}/{{ domain }}{% if sentinel_prefix %}/{{ sentinel_prefix }}{% endif %}"
+    state: directory
+    recurse: true
+    owner: nginx
+    group: nginx
+    mode: "0755"

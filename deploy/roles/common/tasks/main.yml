@@ -1,0 +1,84 @@
+---
+# common/tasks/main.yml — VPS 环境初始化（幂等）
+
+- name: Print VPS basic runtime information
+  tags: [check, always]
+  block:
+    - name: Execute system status query commands
+      ansible.builtin.shell: free -h && df -h / && uptime
+      register: info
+      changed_when: false
+
+    - name: Output memory, disk and load results
+      ansible.builtin.debug:
+        msg: "{{ info.stdout_lines }}"
+
+- name: Configure 1GB Swap partition if not exists
+  tags: [check, swap]
+  block:
+    - name: Check if system has Swap enabled
+      # 修复 command-instead-of-shell: 简单指令优先使用 command
+      ansible.builtin.command: swapon --show=SIZE --noheadings
+      register: swap_check
+      changed_when: false
+
+    - name: Create swap file /swapfile
+      ansible.builtin.command: fallocate -l 1G /swapfile
+      when: swap_check.stdout == ""
+      # 修复 no-changed-when: 告知 Ansible 产生变更的条件
+      changed_when: true
+
+    - name: Set swap file permissions
+      ansible.builtin.file:
+        path: /swapfile
+        mode: "0600"
+      when: swap_check.stdout == ""
+
+    - name: Format as swap partition
+      ansible.builtin.command: mkswap /swapfile
+      when: swap_check.stdout == ""
+      changed_when: true
+
+    - name: Enable swap partition immediately
+      ansible.builtin.command: swapon /swapfile
+      when: swap_check.stdout == ""
+      changed_when: true
+
+    - name: Persist Swap configuration in fstab
+      ansible.builtin.lineinfile:
+        path: /etc/fstab
+        line: "/swapfile none swap sw 0 0"
+        state: present
+
+- name: Install Python 3.9 runtime environment
+  tags: [check]
+  ansible.builtin.dnf:
+    name: [python39, python39-pip]
+    state: present
+
+- name: Install basic maintenance tools
+  tags: [check]
+  ansible.builtin.dnf:
+    name: [git, rsync, cronie]
+    state: present
+
+- name: Ensure crond service is running
+  tags: [check]
+  ansible.builtin.systemd:
+    name: crond
+    enabled: true
+    state: started
+
+- name: Deploy ChangeIP DDNS script from template
+  tags: [ddns]
+  ansible.builtin.template:
+    src: changeip.sh.j2
+    dest: /usr/local/bin/changeip.sh
+    mode: '0755'
+
+- name: Setup Cron job for ChangeIP DDNS Update
+  tags: [ddns]
+  ansible.builtin.cron:
+    name: "Update ChangeIP DDNS"
+    minute: "*/10"
+    job: "/usr/local/bin/changeip.sh"

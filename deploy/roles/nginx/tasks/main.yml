@@ -1,0 +1,65 @@
+---
+# ── 1. 安装基础组件 ───────────────────────────────────────────
+- name: Install Nginx and Certbot
+  ansible.builtin.dnf:
+    name: [nginx, certbot, python3-certbot-nginx]
+    state: present
+
+- name: Ensure Certbot webroot challenge directory exists
+  ansible.builtin.file:
+    path: /var/www/certbot
+    state: directory
+    owner: nginx
+    group: nginx
+    mode: '0755'
+
+# ── 2. 检查 SSL 证书是否存在 ──────────────────────────────────
+- name: Check if SSL certificate exists
+  ansible.builtin.stat:
+    path: "/etc/letsencrypt/live/{{ domain }}/fullchain.pem"
+  register: ssl_cert
+
+# ── 3. 解决“鸡生蛋”问题：证书不存在时的首次申请流程 ──────────
+- name: Handle initial SSL certificate request
+  when: not ssl_cert.stat.exists
+  block:
+    - name: Deploy minimal HTTP-only Nginx configuration for ACME challenge
+      ansible.builtin.template:
+        src: nginx-http.conf.j2
+        dest: "/etc/nginx/conf.d/{{ domain }}.conf"
+        mode: '0644'
+
+    - name: Restart Nginx to load HTTP config for challenge
+      ansible.builtin.systemd:
+        name: nginx
+        state: restarted
+        enabled: true
+
+    - name: Request Let's Encrypt Certificate (Webroot method)
+      ansible.builtin.command: >
+        certbot certonly --webroot -w /var/www/certbot
+        -d {{ domain }}
+        --non-interactive --agree-tos -m admin@{{ domain }}
+      changed_when: true
+      notify: Reload Nginx
+
+# ── 4. 部署最终的完整 Nginx 配置文件 (无论是否首次申请都覆盖) ─
+- name: Deploy full Nginx configuration (HTTP + HTTPS)
+  ansible.builtin.template:
+    src: nginx-full.conf.j2
+    dest: "/etc/nginx/conf.d/{{ domain }}.conf"
+    mode: '0644'
+  notify: Reload Nginx
+
+# ── 5. 确保 Nginx 正常运行和定时续期生效 ────────────────────
+- name: Ensure Nginx is running and enabled
+  ansible.builtin.systemd:
+    name: nginx
+    enabled: true
+    state: started
+
+- name: Enable Certbot automatic renewal timer
+  ansible.builtin.systemd:
+    name: certbot-renew.timer
+    enabled: true
+    state: started

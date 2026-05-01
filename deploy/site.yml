@@ -1,0 +1,38 @@
+---
+# StockSentinel — 主 playbook
+# 基础设施变量在此统一定义，实现物理环境与应用逻辑的绝对隔离
+
+- name: StockSentinel 部署
+  hosts: vps
+  become: true
+  vars_files:
+    - secrets.yml
+  vars:
+    # ── 基础设施变量 (由 Ansible 绝对控制) ──
+    domain: "racknerdvps.dynamic-dns.net"
+    web_base: "/usr/share/nginx"
+    service_name: "stock-sentinel-bot"
+    sentinel_path: "/root/stock-sentinel"
+    sentinel_prefix: ""
+    hugo_path: "/usr/local/bin/hugo"
+
+  roles:
+    - role: common
+    - role: nginx
+    - role: hugo
+    - role: agent
+
+  pre_tasks:
+    - name: Use Python native TOML parser on localhost
+      tags: [always]
+      ansible.builtin.shell:
+        cmd: "python3 -c 'import tomllib, json; print(json.dumps(tomllib.load(open(\"{{ playbook_dir }}/../config/settings.toml\", \"rb\"))))'"
+      register: toml_output
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Inject business variables from TOML
+      tags: [always]
+      ansible.builtin.set_fact:
+        # 将 TOML 存入 cfg，供ANSIBLE的role使用。如配置 Cron 和 Discord ID 时使用
+        cfg: "{{ toml_output.stdout | from_json }}"
