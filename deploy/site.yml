@@ -9,7 +9,7 @@
     - secrets.yml
   vars:
     # ── 基础设施变量 (由 Ansible 绝对控制) ──
-    domain: "racknerdvps.dynamic-dns.net"
+    domain: "myoracle.dynamic-dns.net"
     web_base: "/usr/share/nginx"
     service_name: "stock-sentinel-bot"
     sentinel_path: "/root/stock-sentinel"
